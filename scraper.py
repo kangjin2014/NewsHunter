@@ -1,7 +1,9 @@
 import urllib
 from bs4 import BeautifulSoup
 import re
+import numpy as np
 import pandas as pd
+import os.path
 
 class scraper(object):
     
@@ -76,17 +78,72 @@ class scraper(object):
             while indicator == ctr :
                 return all_links
 
-    def get_text(self):
-        pass
+    def get_text(self, link):
+        soup = self.__soupify(link)
+        """
+        removes a tag or string from the tree. 
+        It returns the tag or string that was extracted:
+        """
+        while type(soup) != str:
+            for script in soup(["script", "style"]):
+                script.extract()
 
-    def clean_text(self):
-        pass
-        
-             
-front_page_link = 'https://www.cnn.com'
-w = scraper(front_page_link)
-s = w.recursive_link_searching(100)
-ds = [x for sublist in s for x in sublist]
-df = pd.DataFrame(ds)
-df.columns = ['link']
-df.to_csv('data/dataset_cnn.csv', index=False)
+            tokens = soup.get_text().split('\n')
+            text = ' '.join(tokens)
+            text = re.sub('\xa0',' ', text)
+            return text
+
+    def save_links(self, links):
+        '''
+        save file if the file doesn't exist: overwrite not allow.
+        '''
+        file_name = re.findall(r'\/\/(.*?)$', self.home_path)[0].split('.')[-2]
+        file_path = 'data/'+ 'links_' + file_name+'.csv'
+        while os.path.exists(file_path) == False:
+            ds = [x for sublist in links for x in sublist]
+            ds = list(set(ds))
+            df = pd.DataFrame(ds)
+            df.columns = ['link']
+            df.to_csv(file_path, index=False)
+
+class link_analyzer(object):
+    '''
+    input: links, type :panda series
+    ouput: filter out irrelevant path, keep related paths ranked by frequency
+    '''
+    def __init__(self, links):
+        self.links = links.tolist()
+    
+    def __remove_home_path(self, link):
+        return re.sub('http(.*?)//(.*?)/', '', link)
+    
+    def __split(self, link):
+        return link.split('/')
+    
+    def __rename_columns(self, df_block):
+        number_of_columns = df_block.shape[1]
+        df_block.columns = [ 'col'+str(element) for element in np.arange(number_of_columns)]
+        return df_block
+    
+    def generate_df_blocks(self):
+        '''
+        call above private functions to generate dataframe of path blocks
+        eg. for single record 
+        http://www.cnn.com/news/cananda/who-is-121.3.131 
+        will turn to ['news', 'canada', 'who-is-121.3.131'] in a row
+        '''
+        sr_links = pd.Series(self.links)
+        sr_links = sr_links.apply(self.__remove_home_path)
+        sr_block = sr_links.apply(self.__split)
+        df_block = pd.DataFrame(sr_block.tolist())
+        df_block = self.__rename_columns(df_block)
+        return df_block
+    
+    def block_analyzer(self, df_block):
+        '''
+        get frequent paths
+        '''
+        df_block_sorted = df_block.groupby(by=['col0']).count().sort_values(by=['col1'], ascending=False)
+        df_block_sorted['percentage'] = df_block_sorted.col1/sum(df_block_sorted.col1)
+        df_block_sorted = df_block_sorted[df_block_sorted.percentage > 0.01]
+        return df_block_sorted
